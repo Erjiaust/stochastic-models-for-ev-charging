@@ -1,0 +1,130 @@
+# Closed-Loop Two-Echelon Battery Swap-Charging System with Online Primal-Dual Control
+
+## Problem Description
+
+We consider a two-echelon closed-loop battery swapping system consisting of charging depots \(\mathcal{C} = \{1,\dots,C\}\) and swapping stations \(\mathcal{S} = \{1,\dots,S\}\). Fully charged batteries flow downward; depleted batteries flow upward. Stochastic demand occurs only at swapping stations. The objective is to minimize the long-run average expected total cost while jointly learning the unknown demand distribution via online primal-dual control.
+
+**Timing within each period \( t \)**:
+
+- At the *beginning* of period \( t \), each charging depot \( c \) decides the number of batteries to charge \( q_{c,t} \) (subject to on-hand empties \( E^C_{c,t} \)) and the shipment plan \( (x_{c,s,t}, r_{s,c,t}) \).
+- Full batteries are shipped to swapping stations.
+- Each swapping station \( s \) serves realized demand \( D_{s,t} \) using on-hand full batteries plus incoming shipments.
+- Served demand generates new empty batteries at the station. *Only pre-existing empties* (\( E^S_{s,t} \)) can be returned in period \( t \); newly generated empties (\( m_{s,t} \)) become available for return only in period \( t+1 \).
+- Returns \( r_{s,c,t} \) arrive at charging depots at the *end* of period \( t \).
+
+## Model Assumptions
+
+- Total battery population \( B_{\mathrm{tot}} \) is conserved and finite.
+- Demand \( D_{s,t} \) is i.i.d. across periods and stations, drawn from an unknown stationary distribution with bounded support.
+- All costs are linear and time-invariant.
+- Periodic-review, infinite-horizon setting.
+- Step sizes satisfy \( \epsilon_t = \Theta(1/\sqrt{t}) \) and \( \eta_t = \Theta(1/\sqrt{t}) \).
+
+## Notation
+
+**Sets:** \(\mathcal{C}\), \(\mathcal{S}\), \( t=1,2,\dots \)
+
+**State variables (beginning of \( t \)):** \( F^C_{c,t} \), \( E^C_{c,t} \), \( F^S_{s,t} \), \( E^S_{s,t} \)
+
+**Decision variables:** \( y_{s,t} \) (target service level at station \( s \)), \( q_{c,t} \), \( x_{c,s,t} \), \( r_{s,c,t} \)
+
+**Parameters:** \( D_{s,t} \), \( a_c \), \( c^F_{c,s} \), \( c^E_{s,c} \), holding costs \( h_s^F, h_s^E, \bar{h}_c^F, \bar{h}_c^E \), lost-sales penalty \( b_s \), upper bounds \( \bar{y}_s \), learning rates \( \epsilon_t, \eta_t \).
+
+## System Dynamics
+
+**Demand fulfillment and lost sales:**
+$$
+m_{s,t} = \min\left\{D_{s,t},\, F^S_{s,t} + \sum_{c\in\mathcal{C}} x_{c,s,t}\right\}, \qquad
+\ell_{s,t} = D_{s,t} - m_{s,t}.
+$$
+
+**State transitions:**
+$$
+\begin{align*}
+F^S_{s,t+1} &= F^S_{s,t} + \sum_{c} x_{c,s,t} - m_{s,t}, \\
+E^S_{s,t+1} &= E^S_{s,t} + m_{s,t} - \sum_{c} r_{s,c,t}, \\
+E^C_{c,t+1} &= E^C_{c,t} + \sum_{s} r_{s,c,t} - q_{c,t}, \\
+F^C_{c,t+1} &= F^C_{c,t} + q_{c,t} - \sum_{s} x_{c,s,t}.
+\end{align*}
+$$
+
+**Physical feasibility:**
+$$
+x_{c,s,t} \ge 0,\ r_{s,c,t} \ge 0,\ q_{c,t} \ge 0, \quad
+\sum_{s} x_{c,s,t} \le F^C_{c,t},\quad
+\sum_{c} r_{s,c,t} \le E^S_{s,t},\quad
+q_{c,t} \le E^C_{c,t}.
+$$
+
+**Total battery conservation:**
+$$
+\sum_{c} (F^C_{c,t} + E^C_{c,t}) + \sum_{s} (F^S_{s,t} + E^S_{s,t}) = B_{\mathrm{tot}}.
+$$
+
+## One-Period Cost
+$$
+Q_t = \sum_{c} a_{c} q_{c,t}
++ \sum_{c,s} c^F_{c,s} x_{c,s,t}
++ \sum_{s,c} c^E_{s,c} r_{s,c,t}
++ \sum_{s} h_s^F F^S_{s,t+1}
++ \sum_{s} h_s^E E^S_{s,t+1}
++ \sum_{c} \bar{h}_c^F F^C_{c,t+1}
++ \sum_{c} \bar{h}_c^E E^C_{c,t+1}
++ \sum_{s} b_s \ell_{s,t}.
+$$
+
+## Online Primal-Dual Learning Algorithm
+
+At each period \( t \):
+
+**Step 1: Primal Decision Rule (reduced-cost LP)**
+$$
+\begin{aligned}
+\min_{q,x,r} \quad & \sum_{c} (a_{c} - \mu_{c,t}) q_{c,t}
++ \sum_{c,s} (c^F_{c,s} - \lambda_{s,t}) x_{c,s,t}
++ \sum_{s,c} c^E_{s,c} r_{s,c,t} \\
+\text{s.t.} \quad & \text{Physical feasibility constraints above}, \\
+& \sum_{c} x_{c,s,t} \le z_{s,t} \triangleq (y_{s,t} - F^S_{s,t})^+,\quad \forall s.
+\end{aligned}
+$$
+Implement optimal \( (q^*_{c,t}, x^*_{c,s,t}, r^*_{s,c,t}) \).
+
+**Step 2:** Observe \( D_{s,t} \), compute \( m_{s,t} \), \( \ell_{s,t} \), update states, record \( Q_t \).
+
+**Step 3: Swap-Side Target Learning (Primal Update)**  
+Update \( y_{s,t} \) via online projected subgradient descent on the newsvendor loss augmented with the dual penalty:
+$$
+y_{s,t+1} = \Pi_{[0,\bar{y}_s]}\Bigl(y_{s,t} - \epsilon_t H_{s,t}\Bigr),
+$$
+where the unbiased stochastic subgradient is
+$$
+H_{s,t} =
+\begin{cases}
+h_s^F + \lambda_{s,t} & \text{if } D_{s,t} < y_{s,t}, \\
+-b_s + \lambda_{s,t} & \text{if } D_{s,t} \geq y_{s,t}.
+\end{cases}
+$$
+
+**Step 4: Dual Price Updates (Virtual Queue Dynamics)**
+$$
+\begin{aligned}
+\lambda_{s,t+1} &= \Bigl[\lambda_{s,t} + \eta_t \bigl(z_{s,t} - \sum_c x^*_{c,s,t}\bigr)\Bigr]^+, \\
+\mu_{c,t+1} &= \Bigl[\mu_{c,t} + \eta_t \bigl( \sum_{s} x^*_{c,s,t} - q^*_{c,t} \bigr) \Bigr]^+.
+\end{aligned}
+$$
+Here \( \lambda_{s,t} \) enforces the swap-side replenishment target, while \( \mu_{c,t} \) coordinates long-term charging-to-shipment flow balance at each depot.
+
+**Step 5: Recovery Mechanism**  
+Define virtual queue
+$$
+B_{s,t+1} = \Bigl[ B_{s,t} + z_{s,t} - \sum_c x^*_{c,s,t} \Bigr]^+,\quad B_{s,1}=0.
+$$
+If \( B_{s,t}>0 \), freeze \( y_{s,t+1}=y_{s,t} \) and continue growing \( \lambda_{s,t} \) until the backlog dissipates.
+
+## Theoretical Guarantee
+
+Under the stated step-size conditions and bounded gradients, the algorithm achieves
+$$
+\mathbb{E}\left[\sum_{t=1}^T Q_t(\pi_t)\right] - \min_{\pi \in \Pi_{\mathrm{stat}}} \mathbb{E}\left[\sum_{t=1}^T Q_t(\pi)\right] \leq \mathcal{O}(\sqrt{T}),
+$$
+where \( \Pi_{\mathrm{stat}} \) is the set of stationary feasible policies.
